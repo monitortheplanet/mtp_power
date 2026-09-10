@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<!--
+  Copyright (c) 2026 Monitor The Planet S.r.l. All rights reserved.
+  Proprietary and confidential. Unauthorized copying, distribution or use
+  of this file, via any medium, is strictly prohibited.
+  Purpose: ROS 2 package manifest.
+-->
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mtp_power</name>
+  <version>1.0.0</version>
+  <description>
+    Power the robot off from the radio. A continuous hold on one radio button
+    arms, confirms and then runs `sudo -n /sbin/shutdown -h now`, refusing
+    unless the wheel odometry proves the machine has been standing still.
+    Every step is published on /power/state so the buzzer and the LED can tell
+    a human standing next to a 350 kg machine what is about to happen.
+    Platform code, running today on MECGEOS.
+  </description>
+  <maintainer email="berruti.alessandro@gmail.com">Alessandro Berruti</maintainer>
+  <license>Proprietary</license>
+
+  <depend>rclpy</depend>
+  <!-- ParameterDescriptor and FloatingPointRange: params.py describes and
+       bounds every parameter it declares. -->
+  <depend>rcl_interfaces</depend>
+  <!-- The button level in, and the /power/state JSON out. -->
+  <depend>std_msgs</depend>
+  <!-- /motors/odom: the standstill guard's witness. -->
+  <depend>nav_msgs</depend>
+
+  <!-- power_manager.launch.py starts the node from the installed share. -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <!-- The halt itself is `sudo -n /sbin/shutdown -h now`, permitted by
+       /etc/sudoers.d/91-hmi-power (mtp_ops/security/sudoers-hmi-power.in).
+       That rule is a system asset, not a package dependency: without it the
+       node still runs, refuses the halt, and says exactly why. -->
+
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <!-- test_param_binding.py parses the parameter file and builds the launch
+       file with the ros2 launch CLI. -->
+  <test_depend>python3-yaml</test_depend>
+  <test_depend>ros2launch</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

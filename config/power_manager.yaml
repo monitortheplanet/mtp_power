@@ -1,0 +1,166 @@
+# Copyright (c) 2026 Monitor The Planet S.r.l. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution or use
+# of this file, via any medium, is strictly prohibited.
+# Purpose: power manager configuration for the MECGEOS robot.
+
+# Power manager configuration for the MECGEOS robot
+# Turns a continuous hold on one radio button into `sudo -n /sbin/shutdown -h
+# now`, and tells the rest of the robot what it is doing on /power/state so
+# the buzzer and the LED can say it out loud.
+#
+# WHAT each parameter means is in mtp_power/params.py, and comes back out of
+# `ros2 param describe /power_manager <name>`. WHY this robot runs these
+# particular values is here, next to the values.
+#
+# Every parameter is declared read-only: the node turns them into
+# subscriptions, a timer and one state machine once, in its constructor, so
+# `ros2 param set` is refused rather than accepted and ignored. To change any
+# of this, edit the file and restart the node.
+#
+# The root key must be the node name the launch file declares (power_manager).
+# ROS silently drops a `ros__parameters` block whose key matches no node, and
+# every value below would fall back to its default with nothing in the log -
+# test/test_param_binding.py exists to catch exactly that.
+
+power_manager:
+  ros__parameters:
+
+    # ---- inputs -----------------------------------------------------
+    # THE BUTTON. std_msgs/Bool, and the ONLY thing this node assumes about
+    # it is that it is a Bool: which physical button it is, is this line and
+    # nothing else. Nothing in the code, the tests or the docs is written
+    # around a particular one.
+    #
+    # Measured on the robot 2026-09-10 over a 120 s window: every one of the
+    # ten topics `mtp_autec_radio` publishes (BUTTON_TOPICS in
+    # scripts/joy_to_cmd_vel_node.py) carries 2402 messages, i.e. a LEVEL at
+    # 20 Hz, pressed or not - the teleop node republishes every mapped button
+    # on every /radio/joy message rather than only on change. So a hold is a
+    # steady stream of `true` and a release a steady stream of `false`, and
+    # silence means the radio driver or the radio itself is gone.
+    #
+    # WHICH button, and a name shift worth knowing about. The operator chose
+    # the physical fn1 on the transmitter (his panel: fn1 free, fn2 for lights
+    # that are not installed, fn3a auto, fn3b manual), so fn1 is the one
+    # button with no other function on this machine.
+    #
+    # Measured live on 2026-09-10, the robot button TOPIC names were shifted
+    # by one against the transmitter's labels: physical fn1 is joy index 8,
+    # which BUTTON_TOPICS did not map at all, and the topic then called
+    # /radio/button/robot/fn1 was physically fn2. mtp_autec_radio is being
+    # corrected separately so that index 8 becomes /radio/button/robot/fn1;
+    # after that change the line below is exactly the physical fn1 button.
+    # This package does not touch mtp_autec_radio and does not depend on the
+    # fix landing: until it does, this topic simply carries the neighbouring
+    # button, and the node behaves identically. If the operator ever changes
+    # his mind, this is a one-line edit and a restart.
+    button_topic : /radio/button/robot/fn1
+
+    # THE STANDSTILL WITNESS. The wheel odometry, not /odometry/filtered:
+    # the tracks are what actually move the machine, and the EKF fuses in an
+    # IMU and a GNSS that can each hold a fused velocity near zero while a
+    # track is turning, or drift a parked robot to a few cm/s. Measured
+    # 10.0 Hz on the robot, 2026-09-10.
+    odom_topic : /motors/odom
+
+    # ---- output -----------------------------------------------------
+    # The shared contract: std_msgs/String carrying JSON, RELIABLE +
+    # TRANSIENT_LOCAL depth 1, published on every change and at least once a
+    # second. mtp_carrier_io subscribes it to drive the buzzer and the LED,
+    # and the HMI bridge forwards it to the operator's screen.
+    state_topic : /power/state
+
+    # ---- the gesture ------------------------------------------------
+    # THE OPERATOR'S GESTURE, chosen by him on 2026-09-10: 3.0 seconds of
+    # continuous hold in total, split 1.0 + 2.0.
+    #
+    # 1.0 s before anything happens, so that brushing the button while
+    # climbing on or off the machine, or resting a hand on the transmitter,
+    # cannot start a shutdown. At 20 Hz that is 20 consecutive `true`
+    # messages: not something a contact bounce produces.
+    arm_hold_s : 1.0
+
+    # 2.0 s more, during which letting go still cancels everything. This is
+    # the window in which the operator sees the LED and hears the buzzer and
+    # can change his mind - the whole point of splitting the gesture in two.
+    confirm_hold_s : 2.0
+
+    # How much of the 2.0 s window above the `arming` acknowledgement takes
+    # before the state moves on to `confirming`. It is taken OUT of the
+    # confirm window, not added to it, so the whole gesture stays 3.0 s.
+    #
+    # It exists because `arming` and `confirming` have deliberately different
+    # patterns in mtp_carrier_io - 5 Hz blink + beep for "I heard you",
+    # 10 Hz for "let go and it stops" - and at 5 Hz one blink is 200 ms. An
+    # acknowledgement shorter than a couple of periods would read as a glitch
+    # rather than as a pattern. 0.5 s is two and a half blinks, and leaves
+    # 1.5 s of countdown.
+    arming_ack_s : 0.5
+
+    # Silence on button_topic that counts as a RELEASE. At the measured
+    # 20 Hz, 1.0 s is 20 missed messages in a row: the radio driver has
+    # stopped, or the radio has. It is treated as a release and not as a
+    # continuing press on purpose - continuing a shutdown on behalf of a
+    # radio that is no longer talking to us is the one failure mode worth
+    # designing against here. The cost is that a link that stutters for a
+    # second mid-gesture costs the operator the gesture; he presses again.
+    button_timeout_s : 1.0
+
+    # How long `aborted` is shown before the state returns to `idle`. Long
+    # enough for the 0.6 s abort buzzer of mtp_carrier_io to finish and for
+    # the operator to read the reason on the HMI, short enough not to sit in
+    # the way of a second attempt. Note that returning to `idle` does NOT
+    # re-open the gesture: a refusal latches until the button is released.
+    aborted_hold_s : 2.0
+
+    # ---- the standstill guard ---------------------------------------
+    # Below these the robot counts as standing still. Wheel odometry of a
+    # parked tracked robot never reads exactly zero, so a strict `== 0` test
+    # would make the button impossible to press; 0.02 m/s is 2 cm/s, well
+    # under the 0.563 m/s top speed and well over the encoder noise floor.
+    # The HMI power path (mtp_hmi_bridge/power.py) uses 0.05 on the FILTERED
+    # odometry, which is noisier; the wheel odometry can afford to be
+    # stricter.
+    still_linear_mps : 0.02
+    still_angular_rps : 0.02
+
+    # And it must have been still for this long, not merely be still at the
+    # instant of the request: a robot that has just been commanded to stop is
+    # still settling, and its tracks can creep for a moment after the last
+    # cmd_vel. 1.0 s is 10 consecutive samples at the measured 10 Hz.
+    still_for_s : 1.0
+
+    # Age past which the odometry is stale and the request is REFUSED rather
+    # than granted. A robot whose motion is unknown is not a robot that is
+    # stopped: if the motor bridge has died, this node has no idea whether
+    # the machine is rolling, and powering it off in that state is not
+    # something a button should do. 1.0 s is 10 missed samples.
+    odom_timeout_s : 1.0
+
+    # ---- rates ------------------------------------------------------
+    # How often the state machine is advanced. 0.05 s is the button's own
+    # 20 Hz: ticking faster buys nothing because no new evidence has arrived,
+    # and it bounds how late a transition can be by one period, which is what
+    # the operator perceives as the LED reacting to his thumb.
+    tick_period_s : 0.05
+
+    # How often the state is republished when nothing has changed. The
+    # contract says at least every 1.0 s; every CHANGE is published
+    # immediately regardless, so this is the heartbeat that tells
+    # mtp_carrier_io the node is still alive (its own power_state_timeout_s
+    # is 3.0 s, three of these).
+    publish_period_s : 1.0
+
+    # ---- rehearsal --------------------------------------------------
+    # false on the robot. true runs the entire gesture, publishes every
+    # state, drives the buzzer and the LED through the whole sequence - and
+    # logs a line where `sudo -n /sbin/shutdown -h now` would be. In dry run
+    # `shutting_down` is NOT terminal: releasing the button returns the node
+    # to idle, so the operator can rehearse the gesture as often as he likes
+    # with the robot still on.
+    #
+    # This is how the gesture is tested live. It is a launch-time override,
+    # not an edit of this file:
+    #   ros2 launch mtp_power power_manager.launch.py \
+    #     power_manager_config:=/tmp/power_manager_dry_run.yaml
+    dry_run : false

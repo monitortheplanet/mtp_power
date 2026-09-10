@@ -1,0 +1,77 @@
+# Copyright (c) 2026 Monitor The Planet S.r.l. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution or use
+# of this file, via any medium, is strictly prohibited.
+# Purpose: build and test the package on every push and pull request.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Cache the pre-commit hook environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: pip install pre-commit
+      - run: pre-commit run --all-files --show-diff-on-failure
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    container: ros:humble
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src/mtp_power
+
+      - name: Cache the apt archives
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-humble-mtp_power-${{ hashFiles('src/mtp_power/package.xml') }}
+          restore-keys: apt-humble-mtp_power-
+
+      - name: Refresh the ROS apt signing key
+        # The signing key baked into the image expires, after which apt-get
+        # update fails with EXPKEYSIG and no dependency can be installed.
+        # Removing docker-clean keeps the downloaded .deb files for the cache.
+        run: |
+          rm -f /etc/apt/apt.conf.d/docker-clean
+          apt-get update --allow-insecure-repositories -qq || true
+          apt-get install -y --allow-unauthenticated -qq ca-certificates curl
+          curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+            -o /usr/share/keyrings/ros-archive-keyring.gpg
+
+      - name: Install dependencies
+        run: |
+          source /opt/ros/humble/setup.bash
+          apt-get update
+          rosdep update --rosdistro humble
+          rosdep install --from-paths src --ignore-src -y --rosdistro humble
+
+      - name: Build
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --packages-select mtp_power
+
+      - name: Test
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon test --packages-select mtp_power \
+            --event-handlers console_direct+
+
+      - name: Test results
+        run: colcon test-result --verbose

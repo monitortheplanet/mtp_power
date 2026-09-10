@@ -1,0 +1,45 @@
+# Copyright (c) 2026 Monitor The Planet S.r.l. All rights reserved.
+# Proprietary and confidential. Unauthorized copying, distribution or use
+# of this file, via any medium, is strictly prohibited.
+# Purpose: paths that must never be committed to this repository.
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ROS 2 / colcon
+install/
+log/
+.tmp_ws/
+
+# Test / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup / temporary
+*.bak
+*.tmp
+*.orig
+
+# Environments
+.venv/
+.env
